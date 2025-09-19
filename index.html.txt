@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Satan's Choice Scanner</title>
+    <link rel="icon" href="https://via.placeholder.com/192" type="image/png">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 10px; background: #f4f4f4; }
+        h1 { font-size: 1.5em; text-align: center; }
+        .status { font-weight: bold; color: #333; text-align: center; }
+        button { padding: 10px; margin: 5px; width: 100%; font-size: 1em; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .hits, .logs { margin: 10px 0; }
+        .hits div, .logs div { background: white; padding: 10px; border-radius: 5px; box-shadow: 0 0 5px rgba(0,0,0,0.1); margin-bottom: 5px; }
+        .hit-link { color: #007bff; text-decoration: none; }
+        .hit-link:hover { text-decoration: underline; }
+        @media (max-width: 600px) { h1 { font-size: 1.2em; } button { font-size: 0.9em; } }
+    </style>
+</head>
+<body>
+    <h1>Satan's Choice Scanner</h1>
+    <p class="status">Status: <span id="status">Idle</span></p>
+    <button onclick="startScan()">Start Scanner</button>
+    <button onclick="stopScan()">Stop Scanner</button>
+    <button onclick="requestNotificationPermission()">Enable Notifications</button>
+    <h2>Recent Hits (<span id="hit-count">0</span>)</h2>
+    <div class="hits" id="hits"></div>
+    <h2>Recent Logs</h2>
+    <div class="logs" id="logs"></div>
+
+    <script>
+        const RSS_URLS = [
+            'https://news.google.com/rss/search?q=%22Satan\'s+Choice%22+OR+%22Satans+Choice%22+OR+%22Satan+Choice%22+OR+%22outlaw+motorcycle%22+OR+%22biker+gang%22+OR+%22Hells+Angels+patchover%22+(location+OR+chapter+OR+event+OR+ride+OR+meetup+OR+gathering+OR+rally)+when:90d&hl=en-US&gl=US&ceid=US:en',
+            'https://www.cbc.ca/cmlink/rss-canada',
+            'https://www.ctvnews.ca/rss/',
+            'https://globalnews.ca/feed/',
+            'https://www.reddit.com/r/motorcycles/.rss',
+            'https://www.bing.com/news/search?q=%22Satan\'s+Choice%22+motorcycle+club+location+OR+event&format=rss'
+        ];
+        const keywords = ['location', 'chapter', 'event', 'ride', 'meetup', 'gathering', 'rally', 'patchover'];
+        let hits = JSON.parse(localStorage.getItem('hits') || '[]');
+        let logs = JSON.parse(localStorage.getItem('logs') || '[]');
+        let scannerInterval = null;
+
+        function logMessage(message) {
+            const timestamp = new Date().toISOString();
+            logs.push(`[${timestamp.slice(0, 10)} ${timestamp.slice(11, 19)}] ${message}`);
+            if (logs.length > 10) logs.shift();
+            localStorage.setItem('logs', JSON.stringify(logs));
+            updateLogs();
+        }
+
+        function updateLogs() { document.getElementById('logs').innerHTML = logs.map(log => `<div>${log}</div>`).join(''); }
+        function updateHits() { document.getElementById('hits').innerHTML = hits.map(hit => `<div><strong>${hit.date}</strong>: <a href="${hit.url}" class="hit-link" target="_blank">${hit.title.slice(0, 80)}... (Source: ${hit.source})</a></div>`).join(''); document.getElementById('hit-count').textContent = hits.length; }
+
+        async function fetchRSS(url) {
+            try {
+                const response = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`);
+                const data = await response.json();
+                return data.status === 'ok' ? data.items : [];
+            } catch (e) { logMessage(`Error fetching ${new URL(url).hostname}: ${e.message}`); return []; }
+        }
+
+        function filterHits(items) {
+            return items.filter(item => {
+                const text = (item.title + ' ' + (item.description || '')).toLowerCase();
+                return keywords.some(k => text.includes(k)) && text.includes("satan's choice");
+            }).map(item => ({
+                title: item.title,
+                url: item.link,
+                date: item.pubDate || new Date().toISOString().slice(0, 10),
+                source: item.source?.title || new URL(item.link).hostname
+            })).slice(0, 10);
+        }
+
+        async function runScan() {
+            document.getElementById('status').textContent = 'Scanning...';
+            logMessage('Scanning search engines for Satan's Choice locations...');
+            const allItems = [];
+            for (let url of RSS_URLS) {
+                const items = await fetchRSS(url);
+                allItems.push(...items);
+            }
+            const newHits = filterHits(allItems);
+            if (newHits.length > 0) {
+                hits = [...newHits, ...hits].slice(0, 10);
+                localStorage.setItem('hits', JSON.stringify(hits));
+                updateHits();
+                logMessage(`Found ${newHits.length} new location/event hits.`);
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    newHits.forEach(hit => new Notification('Satan\'s Choice Hit', { body: `${hit.title.slice(0, 100)}...`, data: { url: hit.url } }));
+                }
+            } else {
+                logMessage('No new Satan's Choice locations or events found.');
+            }
+            document.getElementById('status').textContent = 'Running';
+        }
+
+        function startScan() {
+            if (!scannerInterval) {
+                runScan();
+                scannerInterval = setInterval(runScan, 3600000); // Hourly
+                document.getElementById('status').textContent = 'Running';
+                logMessage('Scanner started.');
+            }
+        }
+
+        function stopScan() {
+            if (scannerInterval) {
+                clearInterval(scannerInterval);
+                scannerInterval = null;
+                document.getElementById('status').textContent = 'Stopped';
+                logMessage('Scanner stopped.');
+            }
+        }
+
+        function requestNotificationPermission() {
+            if ('Notification' in window) {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') {
+                        logMessage('Notifications enabled.');
+                        alert('Notifications on! Alerts for new locations/events.');
+                    } else {
+                        alert('Allow notifications in browser settings.');
+                    }
+                });
+            }
+        }
+
+        // Initialize
+        updateHits();
+        updateLogs();
+        document.addEventListener('notificationclick', event => {
+            event.notification.close();
+            if (event.notification.data.url) window.open(event.notification.data.url, '_blank');
+        });
+    </script>
+</body>
+</html>
